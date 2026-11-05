@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
 import { Agent } from 'https'
@@ -6,7 +7,7 @@ import * as path from 'path'
 import { Readable } from 'stream'
 import type { MediaConnInfo, SocketConfig } from '../../Types'
 import type { ILogger } from '../../Utils/logger'
-import { encryptedStream, getWAUploadToServer, type UploadParams, uploadWithNodeHttp } from '../../Utils/messages-media'
+import { downloadEncryptedContent, encryptedStream, getWAUploadToServer, type UploadParams, uploadWithNodeHttp } from '../../Utils/messages-media'
 
 const createTempFile = async (content: string): Promise<string> => {
 	const filePath = path.join(os.tmpdir(), `test-upload-${Date.now()}.txt`)
@@ -485,4 +486,33 @@ describe('encryptedStream', () => {
 			await cleanupFiles([result.encFilePath, result.originalFilePath])
 		}
 	})
+})
+
+describe('downloadEncryptedContent', () => {
+	it('closes the HTTP response when the returned stream is destroyed early', async () => {
+		let onResponseClosed!: () => void
+		const responseClosed = new Promise<void>(resolve => {
+			onResponseClosed = resolve
+		})
+		const server = http.createServer((_req, res) => {
+			res.on('close', onResponseClosed)
+			res.writeHead(200)
+			// never ends, so only a cancel from the client can close it
+			res.write(Buffer.alloc(64 * 1024))
+		})
+		await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+		try {
+			const { port } = server.address() as { port: number }
+			const stream = await downloadEncryptedContent(`http://127.0.0.1:${port}/file`, {
+				cipherKey: randomBytes(32),
+				iv: randomBytes(16)
+			})
+			await new Promise(resolve => stream.once('data', resolve))
+			stream.destroy()
+			await responseClosed
+		} finally {
+			server.closeAllConnections()
+			await new Promise(resolve => server.close(resolve))
+		}
+	}, 10_000)
 })
