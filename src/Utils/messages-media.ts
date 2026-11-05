@@ -649,6 +649,9 @@ export const downloadEncryptedContent = async (
 			}
 		}
 	})
+	// pipe() does not destroy its source when the destination is destroyed, so a caller that
+	// cancels the download early would leave the HTTP response open
+	output.once('close', () => fetched.destroy())
 	return fetched.pipe(output, { end: true })
 }
 
